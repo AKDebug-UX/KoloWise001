@@ -27,11 +27,12 @@
         "cycleDuration": { "type": "string", "enum": ["daily", "weekly", "monthly"] },
         "payoutOrder": { "type": "array", "items": { "type": "string" }, "description": "List of user UIDs in payout order." },
         "members": { "type": "array", "items": { "type": "string" }, "description": "List of user UIDs." },
+        "inviteCode": { "type": "string", "description": "Unique code to join the group." },
         "createdBy": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" },
         "status": { "type": "string", "enum": ["active", "completed"] }
       },
-      "required": ["name", "contributionAmount", "cycleDuration", "createdBy"]
+      "required": ["name", "contributionAmount", "cycleDuration", "createdBy", "inviteCode"]
     },
     "Contribution": {
       "title": "Contribution",
