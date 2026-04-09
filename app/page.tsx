@@ -1,11 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import Image from 'next/image';
+import { useState, useEffect, Suspense } from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { auth, googleProvider, db, handleFirestoreError, OperationType } from '@/lib/firebase';
 import { signInWithPopup, signOut } from 'firebase/auth';
-import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp, getDocs, updateDoc, doc, getDoc } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { 
   Plus, 
   Users, 
@@ -17,8 +19,12 @@ import {
   Wallet,
   ShieldCheck,
   BrainCircuit,
-  PieChart as PieChartIcon
+  PieChart as PieChartIcon,
+  Copy,
+  UserPlus,
+  Link as LinkIcon
 } from 'lucide-react';
+import LandingPage from '@/components/landing-page';
 import { 
   BarChart, 
   Bar, 
@@ -39,6 +45,8 @@ interface Group {
   contributionAmount: number;
   cycleDuration: string;
   members: string[];
+  payoutOrder: string[];
+  inviteCode: string;
   createdBy: string;
   status: 'active' | 'completed';
 }
@@ -49,6 +57,14 @@ interface Contribution {
   amount: number;
   status: 'paid' | 'pending' | 'late';
   timestamp: any;
+}
+
+interface UserProfile {
+  uid: string;
+  displayName: string;
+  photoURL?: string;
+  trustScore: number;
+  riskLevel: 'Low' | 'Medium' | 'High';
 }
 
 // --- Components ---
@@ -94,7 +110,13 @@ const Login = () => {
           onClick={handleLogin}
           className="w-full py-4 bg-[#1a1a1a] text-white rounded-2xl font-semibold hover:bg-black transition-all flex items-center justify-center gap-3 shadow-lg hover:shadow-xl active:scale-[0.98]"
         >
-          <img src="https://www.google.com/favicon.ico" className="w-5 h-5" alt="Google" />
+          <Image 
+            src="https://www.google.com/favicon.ico" 
+            width={20} 
+            height={20} 
+            alt="Google" 
+            referrerPolicy="no-referrer"
+          />
           Continue with Google
         </button>
       </motion.div>
@@ -109,12 +131,14 @@ const CreateGroupModal = ({ isOpen, onClose, userId }: { isOpen: boolean, onClos
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    const inviteCode = Math.random().toString(36).substring(2, 8).toUpperCase();
     try {
       await addDoc(collection(db, 'groups'), {
         name,
         contributionAmount: Number(amount),
         cycleDuration: duration,
         members: [userId],
+        inviteCode,
         createdBy: userId,
         payoutOrder: [userId],
         status: 'active',
@@ -191,12 +215,110 @@ const CreateGroupModal = ({ isOpen, onClose, userId }: { isOpen: boolean, onClos
   );
 };
 
-export default function Dashboard() {
+const JoinGroupModal = ({ isOpen, onClose, userId, initialCode = '' }: { isOpen: boolean, onClose: () => void, userId: string, initialCode?: string }) => {
+  const [code, setCode] = useState(initialCode);
+  const [error, setError] = useState('');
+
+  const handleJoin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    try {
+      const q = query(collection(db, 'groups'), where('inviteCode', '==', code.toUpperCase()));
+      const snapshot = await getDocs(q);
+      
+      if (snapshot.empty) {
+        setError('Invalid invite code.');
+        return;
+      }
+
+      const groupDoc = snapshot.docs[0];
+      const groupData = groupDoc.data() as Group;
+
+      if (groupData.members.includes(userId)) {
+        setError('You are already a member of this group.');
+        return;
+      }
+
+      await updateDoc(doc(db, 'groups', groupDoc.id), {
+        members: [...groupData.members, userId],
+        payoutOrder: [...groupData.payoutOrder, userId]
+      });
+      
+      onClose();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, 'groups');
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        className="bg-white rounded-[32px] w-full max-w-md p-8 shadow-2xl"
+      >
+        <h2 className="text-2xl font-bold mb-6 text-[#1a1a1a]">Join Ajo Group</h2>
+        <form onSubmit={handleJoin} className="space-y-5">
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">Invite Code</label>
+            <input 
+              required
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              className="w-full p-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-[#5A5A40] transition-all text-center text-2xl font-mono tracking-widest"
+              placeholder="ABCDEF"
+              maxLength={6}
+            />
+            {error && <p className="text-red-500 text-xs mt-2 font-bold">{error}</p>}
+          </div>
+          <div className="flex gap-3 pt-4">
+            <button 
+              type="button"
+              onClick={onClose}
+              className="flex-1 py-4 bg-gray-100 text-gray-600 rounded-2xl font-semibold hover:bg-gray-200 transition-all"
+            >
+              Cancel
+            </button>
+            <button 
+              type="submit"
+              className="flex-1 py-4 bg-[#1a1a1a] text-white rounded-2xl font-semibold hover:bg-black transition-all shadow-lg"
+            >
+              Join Group
+            </button>
+          </div>
+        </form>
+      </motion.div>
+    </div>
+  );
+};
+
+function DashboardContent() {
   const { user, loading, isAuthReady } = useAuth();
   const [groups, setGroups] = useState<Group[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
   const [contributions, setContributions] = useState<Contribution[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  const [isJoinModalOpen, setIsJoinModalOpen] = useState(() => !!searchParams.get('join'));
+  const [showInviteCode, setShowInviteCode] = useState(false);
+  const [showLanding, setShowLanding] = useState(true);
+  const [groupMembers, setGroupMembers] = useState<UserProfile[]>([]);
+  const [initialJoinCode, setInitialJoinCode] = useState(() => searchParams.get('join') || '');
+
+  useEffect(() => {
+    if (searchParams.get('join')) {
+      // Clear the param without refreshing
+      const newUrl = window.location.pathname;
+      window.history.replaceState({}, '', newUrl);
+    }
+  }, [searchParams]);
+
+  // If user is logged in, we don't show the landing page
+  const shouldShowLanding = !user && showLanding;
 
   useEffect(() => {
     if (!user || !isAuthReady) return;
@@ -209,7 +331,7 @@ export default function Dashboard() {
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'groups'));
 
     return () => unsubscribe();
-  }, [user, isAuthReady]);
+  }, [user, isAuthReady, selectedGroup]);
 
   useEffect(() => {
     if (!selectedGroup) return;
@@ -225,6 +347,34 @@ export default function Dashboard() {
     return () => unsubscribe();
   }, [selectedGroup]);
 
+  useEffect(() => {
+    if (!selectedGroup) return;
+
+    const fetchMembers = async () => {
+      const memberData: UserProfile[] = [];
+      for (const memberId of selectedGroup.members) {
+        try {
+          const userDoc = await getDoc(doc(db, 'users', memberId));
+          if (userDoc.exists()) {
+            memberData.push({ uid: memberId, ...userDoc.data() } as UserProfile);
+          } else {
+            memberData.push({
+              uid: memberId,
+              displayName: 'New Member',
+              trustScore: 100,
+              riskLevel: 'Low'
+            } as UserProfile);
+          }
+        } catch (error) {
+          console.error("Error fetching member:", error);
+        }
+      }
+      setGroupMembers(memberData);
+    };
+
+    fetchMembers();
+  }, [selectedGroup]);
+
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center bg-[#f5f5f0]">
       <motion.div 
@@ -235,6 +385,7 @@ export default function Dashboard() {
     </div>
   );
 
+  if (shouldShowLanding) return <LandingPage onGetStarted={() => setShowLanding(false)} />;
   if (!user) return <Login />;
 
   // Mock AI Data for demo
@@ -285,12 +436,22 @@ export default function Dashboard() {
         <div className="lg:col-span-3 space-y-6">
           <div className="flex items-center justify-between">
             <h2 className="text-xs font-bold uppercase tracking-widest text-gray-400">My Groups</h2>
-            <button 
-              onClick={() => setIsModalOpen(true)}
-              className="p-1 bg-[#5A5A40] text-white rounded-lg hover:bg-[#4a4a35] transition-all"
-            >
-              <Plus className="w-4 h-4" />
-            </button>
+            <div className="flex gap-2">
+              <button 
+                onClick={() => setIsJoinModalOpen(true)}
+                className="p-1 bg-white text-[#5A5A40] border border-[#5A5A40] rounded-lg hover:bg-gray-50 transition-all"
+                title="Join Group"
+              >
+                <UserPlus className="w-4 h-4" />
+              </button>
+              <button 
+                onClick={() => setIsModalOpen(true)}
+                className="p-1 bg-[#5A5A40] text-white rounded-lg hover:bg-[#4a4a35] transition-all"
+                title="Create Group"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
           </div>
           <div className="space-y-3">
             {groups.map(group => (
@@ -353,7 +514,7 @@ export default function Dashboard() {
 
                 <motion.div 
                   whileHover={{ y: -4 }}
-                  className="bg-[#1a1a1a] p-6 rounded-[32px] shadow-lg text-white"
+                  className="bg-[#1a1a1a] p-6 rounded-[32px] shadow-lg text-white relative overflow-hidden"
                 >
                   <div className="flex items-center gap-3 mb-4">
                     <div className="p-2 bg-white/10 text-white rounded-xl">
@@ -363,6 +524,56 @@ export default function Dashboard() {
                   </div>
                   <p className="text-3xl font-bold">Low</p>
                   <p className="text-[10px] text-white/60 mt-2 font-medium">98% probability of full cycle completion</p>
+                  
+                  <button 
+                    onClick={() => setShowInviteCode(!showInviteCode)}
+                    className="absolute top-6 right-6 p-2 bg-white/10 rounded-xl hover:bg-white/20 transition-all"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                  </button>
+
+                  <AnimatePresence>
+                    {showInviteCode && (
+                      <motion.div 
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 10 }}
+                        className="absolute inset-0 bg-[#1a1a1a] p-6 flex flex-col justify-center items-center text-center"
+                      >
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-white/40 mb-2">Invite Code</p>
+                        <div className="flex items-center gap-3">
+                          <span className="text-3xl font-mono font-bold tracking-widest">{selectedGroup.inviteCode}</span>
+                          <button 
+                            onClick={() => {
+                              navigator.clipboard.writeText(selectedGroup.inviteCode);
+                              alert('Invite code copied!');
+                            }}
+                            className="p-2 bg-white/10 rounded-lg hover:bg-white/20"
+                            title="Copy Code"
+                          >
+                            <Copy className="w-4 h-4" />
+                          </button>
+                          <button 
+                            onClick={() => {
+                              const link = `${window.location.origin}?join=${selectedGroup.inviteCode}`;
+                              navigator.clipboard.writeText(link);
+                              alert('Invite link copied!');
+                            }}
+                            className="p-2 bg-white/10 rounded-lg hover:bg-white/20"
+                            title="Copy Link"
+                          >
+                            <LinkIcon className="w-4 h-4" />
+                          </button>
+                        </div>
+                        <button 
+                          onClick={() => setShowInviteCode(false)}
+                          className="mt-4 text-[10px] font-bold uppercase tracking-widest text-white/40 hover:text-white"
+                        >
+                          Close
+                        </button>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </motion.div>
               </div>
 
@@ -431,6 +642,64 @@ export default function Dashboard() {
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
+                </div>
+              </div>
+
+              {/* Recent Activity */}
+              <div className="bg-white rounded-[32px] shadow-sm border border-gray-100 overflow-hidden">
+                <div className="p-8 border-b border-gray-50 flex items-center justify-between">
+                  <h3 className="text-sm font-bold">Group Members</h3>
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">{groupMembers.length} Total</span>
+                </div>
+                <div className="divide-y divide-gray-50">
+                  {groupMembers.map(member => {
+                    const memberContribution = contributions.find(c => c.userId === member.uid);
+                    const status = memberContribution?.status || 'pending';
+                    
+                    return (
+                      <div key={member.uid} className="p-6 flex items-center justify-between hover:bg-gray-50 transition-colors">
+                        <div className="flex items-center gap-4">
+                          <div className="w-10 h-10 bg-[#f5f5f0] rounded-full flex items-center justify-center overflow-hidden border border-gray-100">
+                            {member.photoURL ? (
+                              <Image src={member.photoURL} width={40} height={40} alt={member.displayName} referrerPolicy="no-referrer" />
+                            ) : (
+                              <Users className="w-5 h-5 text-gray-400" />
+                            )}
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold">{member.displayName} {member.uid === user.uid && <span className="text-[10px] bg-gray-100 px-1.5 py-0.5 rounded text-gray-500 ml-1">You</span>}</p>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-md ${
+                                status === 'paid' ? 'bg-green-50 text-green-600' : 
+                                status === 'late' ? 'bg-red-50 text-red-600' : 
+                                'bg-amber-50 text-amber-600'
+                              }`}>
+                                {status}
+                              </span>
+                              <span className="text-[10px] text-gray-400 font-medium">Trust: {member.trustScore}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="flex items-center gap-1 justify-end">
+                            <BrainCircuit className={`w-3 h-3 ${
+                              member.riskLevel === 'Low' ? 'text-green-500' : 
+                              member.riskLevel === 'Medium' ? 'text-amber-500' : 
+                              'text-red-500'
+                            }`} />
+                            <span className={`text-[10px] font-bold uppercase tracking-widest ${
+                              member.riskLevel === 'Low' ? 'text-green-600' : 
+                              member.riskLevel === 'Medium' ? 'text-amber-600' : 
+                              'text-red-600'
+                            }`}>
+                              {member.riskLevel} Risk
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-gray-400 mt-1 font-medium">AI Prediction</p>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -515,6 +784,28 @@ export default function Dashboard() {
         onClose={() => setIsModalOpen(false)} 
         userId={user.uid} 
       />
+      <JoinGroupModal 
+        key={initialJoinCode}
+        isOpen={isJoinModalOpen} 
+        onClose={() => {
+          setIsJoinModalOpen(false);
+          setInitialJoinCode('');
+        }} 
+        userId={user.uid} 
+        initialCode={initialJoinCode}
+      />
     </div>
+  );
+}
+
+export default function Dashboard() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-[#f5f5f0]">
+        <div className="w-12 h-12 border-4 border-[#5A5A40] border-t-transparent rounded-full animate-spin" />
+      </div>
+    }>
+      <DashboardContent />
+    </Suspense>
   );
 }
