@@ -1,0 +1,66 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and trust score information.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "trustScore": { "type": "number", "description": "0-100 score based on payment history." },
+        "riskLevel": { "type": "string", "enum": ["Low", "Medium", "High"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "displayName"]
+    },
+    "Group": {
+      "title": "Ajo Group",
+      "description": "A thrift contribution group.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "contributionAmount": { "type": "number" },
+        "cycleDuration": { "type": "string", "enum": ["daily", "weekly", "monthly"] },
+        "payoutOrder": { "type": "array", "items": { "type": "string" }, "description": "List of user UIDs in payout order." },
+        "members": { "type": "array", "items": { "type": "string" }, "description": "List of user UIDs." },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["active", "completed"] }
+      },
+      "required": ["name", "contributionAmount", "cycleDuration", "createdBy"]
+    },
+    "Contribution": {
+      "title": "Contribution",
+      "description": "A single payment made by a user to a group.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "groupId": { "type": "string" },
+        "userId": { "type": "string" },
+        "amount": { "type": "number" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["paid", "pending", "late"] },
+        "cycleIndex": { "type": "number", "description": "Which round of the ajo this is." }
+      },
+      "required": ["groupId", "userId", "amount", "timestamp", "status"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles."
+    },
+    "/groups/{groupId}": {
+      "schema": "Group",
+      "description": "Ajo groups."
+    },
+    "/groups/{groupId}/contributions/{contributionId}": {
+      "schema": "Contribution",
+      "description": "Payments within a group."
+    }
+  }
+}
